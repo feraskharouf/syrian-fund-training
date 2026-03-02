@@ -2,8 +2,23 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>الصندوق السيادي السوري — نظام التدريب 2026</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>الصندوق السيادي السوري — التدريب 2026</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.json" />
+  <meta name="theme-color" content="#1B3A6B" />
+  <meta name="mobile-web-app-capable" content="yes" />
+
+  <!-- iPhone / Safari PWA -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="التدريب 2026" />
+  <link rel="apple-touch-icon" href="/icon-192.png" />
+
+  <!-- SEO / Share -->
+  <meta name="description" content="نظام إدارة الاحتياجات التدريبية للصندوق السيادي السوري 2026" />
+
   <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&display=swap" rel="stylesheet">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -12,10 +27,92 @@
     ::-webkit-scrollbar-track { background: #1e293b; }
     ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
     select option { background: #1e293b; color: #e2e8f0; }
+
+    /* Install banner */
+    #install-banner {
+      display: none;
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: linear-gradient(135deg, #1B3A6B, #0f172a);
+      border: 1px solid #C8973A;
+      border-radius: 14px;
+      padding: 14px 20px;
+      z-index: 9999;
+      font-family: 'Tajawal', sans-serif;
+      direction: rtl;
+      text-align: center;
+      min-width: 300px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+      animation: slideUp .3s ease;
+    }
+    #install-banner.show { display: block; }
+    #install-banner p { color: #e2e8f0; font-size: 14px; font-weight: 700; margin-bottom: 10px; }
+    #install-banner small { color: #94a3b8; font-size: 11px; display: block; margin-bottom: 12px; }
+    .install-btns { display: flex; gap: 8px; justify-content: center; }
+    .btn-install { background: #C8973A; color: #fff; border: none; padding: 9px 20px; border-radius: 8px; font-family: inherit; font-weight: 700; font-size: 13px; cursor: pointer; }
+    .btn-dismiss { background: #334155; color: #94a3b8; border: none; padding: 9px 14px; border-radius: 8px; font-family: inherit; font-size: 12px; cursor: pointer; }
+    @keyframes slideUp { from { opacity:0; transform: translateX(-50%) translateY(20px); } to { opacity:1; transform: translateX(-50%) translateY(0); } }
   </style>
 </head>
 <body>
   <div id="root"></div>
+
+  <!-- Install Banner -->
+  <div id="install-banner">
+    <p>📱 ثبّت التطبيق على هاتفك</p>
+    <small>يشتغل بدون إنترنت · أيقونة على الشاشة الرئيسية</small>
+    <div class="install-btns">
+      <button class="btn-install" id="btn-install">تثبيت الآن</button>
+      <button class="btn-dismiss" id="btn-dismiss">لاحقاً</button>
+    </div>
+  </div>
+
   <script type="module" src="/src/main.jsx"></script>
+
+  <script>
+    // Register Service Worker
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+          .then(r => console.log('SW registered:', r.scope))
+          .catch(e => console.log('SW error:', e));
+      });
+    }
+
+    // Install prompt (Android Chrome)
+    let deferredPrompt;
+    const banner = document.getElementById('install-banner');
+    const btnInstall = document.getElementById('btn-install');
+    const btnDismiss = document.getElementById('btn-dismiss');
+
+    window.addEventListener('beforeinstallprompt', e => {
+      e.preventDefault();
+      deferredPrompt = e;
+      // Show banner after 3 seconds
+      setTimeout(() => banner.classList.add('show'), 3000);
+    });
+
+    btnInstall?.addEventListener('click', async () => {
+      banner.classList.remove('show');
+      if (deferredPrompt) {
+        deferredPrompt.prompt();
+        const { outcome } = await deferredPrompt.userChoice;
+        console.log('Install outcome:', outcome);
+        deferredPrompt = null;
+      }
+    });
+
+    btnDismiss?.addEventListener('click', () => {
+      banner.classList.remove('show');
+    });
+
+    // Hide banner if already installed
+    window.addEventListener('appinstalled', () => {
+      banner.classList.remove('show');
+      deferredPrompt = null;
+    });
+  </script>
 </body>
 </html>
