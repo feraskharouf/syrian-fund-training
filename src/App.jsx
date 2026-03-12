@@ -168,18 +168,22 @@ async function auditLog(uid,email,action,table,rid,oldD,newD){
 function generateCertHTML(cert,empName,dept){
   const date=new Date(cert.issued_at).toLocaleDateString("ar-SY");
   const num=cert.cert_number||"SSF-2026-"+Math.random().toString(36).substr(2,8).toUpperCase();
-  return `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>شهادة</title>
+  // FIX #1: Show subtopic as the main title, domain as subtitle
+  const mainTitle = cert.subtopic || cert.domain;
+  const subTitle  = cert.subtopic ? cert.domain : "";
+  return `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>شهادة — ${mainTitle}</title>
 <style>*{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'Arial',sans-serif;background:#f8fafc;display:flex;align-items:center;justify-content:center;min-height:100vh}
-.cert{width:800px;min-height:540px;background:linear-gradient(135deg,#fff 0%,#f8f4ec 100%);
+.cert{width:820px;min-height:560px;background:linear-gradient(135deg,#fff 0%,#f8f4ec 100%);
   border:3px solid #C8973A;border-radius:16px;padding:52px;text-align:center;position:relative;box-shadow:0 12px 48px rgba(0,0,0,.12)}
-.cert::before{content:'';position:absolute;inset:12px;border:1px solid #C8973A44;border-radius:10px}
+.cert::before{content:'';position:absolute;inset:12px;border:1px solid #C8973A44;border-radius:10px;pointer-events:none}
 .logo{font-size:48px;margin-bottom:8px}.org{font-size:22px;font-weight:800;color:#1B3A6B}
-.divider{width:100px;height:2px;background:linear-gradient(90deg,transparent,#C8973A,transparent);margin:14px auto 26px}
+.divider{width:120px;height:2px;background:linear-gradient(90deg,transparent,#C8973A,transparent);margin:14px auto 26px}
 .title{font-size:28px;font-weight:800;color:#C8973A;margin-bottom:22px}
-.body{font-size:16px;color:#374151;line-height:2.4}
+.body{font-size:16px;color:#374151;line-height:2.6}
 .name{font-size:24px;font-weight:800;color:#1B3A6B;border-bottom:2px solid #C8973A;display:inline-block;padding:0 20px 4px;margin:6px 0}
-.domain{font-size:18px;font-weight:700;color:#C8973A;background:#fef9ec;padding:6px 20px;border-radius:8px;display:inline-block;margin:8px 0;border:1px solid #C8973A33}
+.subtopic{font-size:22px;font-weight:800;color:#1B3A6B;background:linear-gradient(135deg,#fef9ec,#fef3c7);padding:10px 28px;border-radius:10px;display:inline-block;margin:8px 0;border:2px solid #C8973A55;letter-spacing:.5px}
+.domain-sub{font-size:13px;color:#94a3b8;margin-top:4px;display:block}
 .footer{display:flex;justify-content:space-between;align-items:flex-end;margin-top:36px;padding-top:20px;border-top:1px solid #e2d5b0}
 .sig{text-align:center;width:180px}.sig-line{width:140px;border-top:1px solid #374151;margin:0 auto 6px}
 .sig-name{font-size:11px;font-weight:700;color:#374151}.sig-sub{font-size:10px;color:#94a3b8}
@@ -194,8 +198,10 @@ body{font-family:'Arial',sans-serif;background:#f8fafc;display:flex;align-items:
 <div class="body">يُشهد الصندوق السيادي السوري بأن<br>
 <span class="name">${empName}</span><br>
 <span style="font-size:12px;color:#64748b">${dept}</span><br>
-قد أتم/أتمت بنجاح برنامج التدريب في مجال<br>
-<span class="domain">${cert.domain}</span></div>
+قد أتم/أتمت بنجاح برنامج التدريب في موضوع<br>
+<span class="subtopic">${mainTitle}</span>
+${subTitle?`<span class="domain-sub">المجال: ${subTitle}</span>`:""}
+</div>
 <div class="footer">
 <div class="sig"><div class="sig-line"></div><div class="sig-name">مدير الموارد البشرية</div><div class="sig-sub">HR Director</div></div>
 <div style="text-align:center"><div style="font-size:34px;margin-bottom:6px">🏆</div><div style="font-size:11px;color:#374151;font-weight:600">تاريخ الإصدار</div><div style="font-weight:700;color:#1B3A6B;font-size:13px">${date}</div></div>
@@ -1048,6 +1054,7 @@ const EVAL_QUESTIONS = {
 
 function EvaluationsPage({employees,attendance,evaluations,certs,user,role,onRefresh}){
   const [selDomain,setSelDomain]=useState(DOMAINS[0]);
+  const [selSubtopic,setSelSubtopic]=useState(""); // FIX #1: which subtopic the cert is for
   const [subTab,setSubTab]=useState("manager");
   const [saving,setSaving]=useState({});
   const [selEmpForEval,setSelEmpForEval]=useState(null);
@@ -1055,19 +1062,34 @@ function EvaluationsPage({employees,attendance,evaluations,certs,user,role,onRef
   const parts=employees.filter(e=>e.needs?.[selDomain]&&e.needs[selDomain]!=="-");
   const attended=parts.filter(e=>attendance.find(a=>a.employee_id===e.id&&a.domain===selDomain&&a.status==="حاضر"));
 
+  // Reset subtopic when domain changes
+  const changeDomain=(d)=>{setSelDomain(d);setSelSubtopic("");setSelEmpForEval(null);};
+
   const upsertEval=async(empId,updates)=>{
     const ex=evaluations.find(e=>e.employee_id===empId&&e.domain===selDomain);
-    if(ex) await supabase.from("evaluations").update({...updates,evaluated_by:user.id}).eq("id",ex.id);
-    else   await supabase.from("evaluations").insert({employee_id:empId,domain:selDomain,...updates,evaluated_by:user.id});
+    // FIX #3: Check for errors and show them
+    let res;
+    if(ex) res=await supabase.from("evaluations").update({...updates,evaluated_by:user.id}).eq("id",ex.id);
+    else   res=await supabase.from("evaluations").insert({employee_id:empId,domain:selDomain,...updates,evaluated_by:user.id});
+    if(res.error){console.error("eval save error:",res.error);return;}
     onRefresh();
   };
 
+  // FIX #1: Store subtopic name in certificate, not just domain
   const issueCert=async(empId)=>{
-    if(certs.find(c=>c.employee_id===empId&&c.domain===selDomain)) return;
+    const certKey=selSubtopic||selDomain;
+    if(certs.find(c=>c.employee_id===empId&&(c.subtopic===certKey||(!c.subtopic&&c.domain===certKey)))) return;
     setSaving(s=>({...s,[empId+"_c"]:true}));
-    const num="SSF-"+selDomain.substring(0,3).replace(/\s/g,"")+"-"+Date.now().toString(36).toUpperCase();
-    await supabase.from("certificates").insert({employee_id:empId,domain:selDomain,issued_by:user.id,cert_number:num});
-    await auditLog(user.id,user.email,"إصدار شهادة","certificates",empId,null,{domain:selDomain,cert_number:num});
+    const num="SSF-"+certKey.substring(0,4).replace(/\s/g,"")+"-"+Date.now().toString(36).toUpperCase();
+    const res=await supabase.from("certificates").insert({
+      employee_id:empId,
+      domain:selDomain,
+      subtopic:selSubtopic||null,  // NEW: store subtopic
+      issued_by:user.id,
+      cert_number:num
+    });
+    if(res.error){console.error("cert error:",res.error);}
+    await auditLog(user.id,user.email,"إصدار شهادة","certificates",empId,null,{domain:selDomain,subtopic:selSubtopic,cert_number:num});
     setSaving(s=>({...s,[empId+"_c"]:false}));
     onRefresh();
   };
@@ -1117,7 +1139,7 @@ function EvaluationsPage({employees,attendance,evaluations,certs,user,role,onRef
         const evCnt=evaluations.filter(ev=>ev.domain===d&&ev.score).length;
         const certCnt=certs.filter(c=>c.domain===d).length;
         const sel=selDomain===d;
-        return <div key={d} onClick={()=>{setSelDomain(d);setSelEmpForEval(null);}}
+        return <div key={d} onClick={()=>changeDomain(d)}
           style={{padding:"8px 10px",borderRadius:7,marginBottom:3,cursor:"pointer",
             background:sel?BG.elevated:"transparent",border:"1px solid "+(sel?DC[d]||BG.border:BG.border+"22"),transition:"all .15s"}}>
           <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
@@ -1134,7 +1156,7 @@ function EvaluationsPage({employees,attendance,evaluations,certs,user,role,onRef
 
     <div>
       {/* Sub-tabs */}
-      <div style={{display:"flex",gap:8,marginBottom:12}}>
+      <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
         {[["manager","👔 المدير يقيّم الموظف","#1d4ed8"],["employee","📝 الموظف يقيّم التدريب","#065f46"]].map(([val,lbl,col])=>(
           <button key={val} style={S.btn(subTab===val?col:BG.elevated,subTab===val?"#fff":"#64748b","8px 18px")}
             onClick={()=>{setSubTab(val);setSelEmpForEval(null);}}>{lbl}</button>
@@ -1144,10 +1166,32 @@ function EvaluationsPage({employees,attendance,evaluations,certs,user,role,onRef
         </div>
       </div>
 
+      {/* FIX #1: Subtopic selector — determines what the certificate says */}
+      <div style={{...S.card,marginBottom:12,padding:"10px 14px"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          <span style={{fontSize:11,color:"#f59e0b",fontWeight:700,whiteSpace:"nowrap"}}>🏆 موضوع الشهادة:</span>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6,flex:1}}>
+            <button onClick={()=>setSelSubtopic("")}
+              style={S.btn(!selSubtopic?"#1d4ed8":BG.page,!selSubtopic?"#fff":"#64748b","5px 12px")}>
+              المجال كاملاً
+            </button>
+            {(SUBTOPICS_DEFAULT[selDomain]||[]).map(t=>(
+              <button key={t} onClick={()=>setSelSubtopic(t)}
+                style={S.btn(selSubtopic===t?DC[selDomain]||"#3b82f6":BG.page,selSubtopic===t?"#fff":"#64748b","5px 12px")}>
+                {t}
+              </button>
+            ))}
+          </div>
+          <span style={{fontSize:10,color:"#475569",whiteSpace:"nowrap"}}>
+            الشهادة ستقول: <strong style={{color:"#e2e8f0"}}>{selSubtopic||selDomain}</strong>
+          </span>
+        </div>
+      </div>
+
       {/* ── MANAGER VIEW ── */}
       {subTab==="manager"&&<div style={S.card}>
         <div style={{display:"flex",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap",gap:8}}>
-          <span style={S.secTitle}>تقييم الأداء — {selDomain}</span>
+          <span style={S.secTitle}>تقييم الأداء — {selSubtopic||selDomain}</span>
         </div>
         {parts.length===0?<Empty icon="⭐" text="لا يوجد موظفون"/>:
         <div style={{overflowX:"auto"}}>
@@ -1488,15 +1532,48 @@ function UsersPage({user,showToast,onRefresh}){
   useEffect(()=>{loadUsers();},[]);
 
   const createUser=async()=>{
-    if(!form.email||!form.password||form.password.length<6){showToast("الإيميل وكلمة السر (6+) مطلوبان","error");return;}
+    if(!form.email||!form.password||form.password.length<6){showToast("الإيميل وكلمة السر (6+ أحرف) مطلوبان","error");return;}
+    if(!form.name.trim()){showToast("الاسم مطلوب","error");return;}
     setSaving(true);
     try{
-      const{data,error}=await supabase.auth.admin.createUser({email:form.email,password:form.password,email_confirm:true,user_metadata:{name:form.name}});
+      // FIX #4 #5: Use signUp instead of admin.createUser
+      // admin.createUser requires service_role key which can't be in frontend
+      const{data,error}=await supabase.auth.signUp({
+        email:form.email,
+        password:form.password,
+        options:{
+          data:{name:form.name},
+          // This skips email confirmation - works if email confirmations are disabled in Supabase
+          emailRedirectTo:window.location.origin
+        }
+      });
       if(error) throw error;
-      await supabase.from("user_roles").insert({user_id:data.user.id,role:form.role,dept:form.dept||null,email:form.email,name:form.name,active:true});
+      if(!data?.user?.id) throw new Error("لم يتم إنشاء الحساب — تحقق من إعدادات Supabase");
+
+      // Save role in user_roles table
+      const res=await supabase.from("user_roles").insert({
+        user_id:data.user.id,
+        role:form.role,
+        dept:form.dept||null,
+        email:form.email,
+        name:form.name,
+        active:true
+      });
+      if(res.error) throw res.error;
+
       await auditLog(user.id,user.email,"إنشاء مستخدم","user_roles",data.user.id,null,{email:form.email,role:form.role});
-      showToast("تم إنشاء المستخدم ✅");setModal(null);setForm({email:"",password:"",role:"staff",dept:"",name:""});loadUsers();
-    }catch(e){showToast("خطأ: "+e.message,"error");}
+      showToast("تم إنشاء الحساب ✅ — أرسل لهم بيانات الدخول");
+      setModal(null);
+      setForm({email:"",password:"",role:"staff",dept:"",name:""});
+      loadUsers();
+    }catch(e){
+      // Provide helpful error messages
+      let msg=e.message;
+      if(msg.includes("already registered")) msg="هذا الإيميل مسجّل مسبقاً";
+      if(msg.includes("password")) msg="كلمة السر ضعيفة — استخدم 6 أحرف أو أكثر";
+      if(msg.includes("email")) msg="صيغة الإيميل غير صحيحة";
+      showToast("خطأ: "+msg,"error");
+    }
     setSaving(false);
   };
 
@@ -1907,7 +1984,8 @@ function AnalyticsPage({employees,attendance,certs,rate,setRate}){
         <KPI v={st.ag.toFixed(2)} l="متوسط الفجوة" c={gc(st.ag)} i="📊"/>
         <KPI v={st.h} l="أولوية عالية" c="#ef4444" i="🔴"/>
         <KPI v={st.m} l="أولوية متوسطة" c="#f59e0b" i="🟡"/>
-        <KPI v={"$"+(st.budget/1000).toFixed(1)+"k"} l="الميزانية" c="#f59e0b" i="💰"/>
+        <KPI v={"$"+(st.budget/1000).toFixed(1)+"k"} l="الميزانية الكلية" c="#f59e0b" i="💰"/>
+        <KPI v={"$"+(st.n>0?Math.round(st.budget/st.n).toLocaleString():"0")} l="تكلفة/موظف" c="#f97316" i="👤" sub="متوسط التكلفة"/>
         <KPI v={st.att} l="حضر تدريباً" c="#22c55e" i="✅"/>
         <KPI v={st.cert} l="شهادات" c="#a78bfa" i="🏆"/>
       </div>
@@ -1976,11 +2054,28 @@ function EmployeesPage({employees,user,role,onRefresh,showToast}){
   const filtered=employees.filter(e=>(deptF==="الكل"||e.dept===deptF)&&(!search||e.name.includes(search)||(e.phone||"").includes(search)));
   const saveEmp=async(emp)=>{
     setSaving(true);
-    if(emp.id){await supabase.from("employees").update(emp).eq("id",emp.id);showToast("تم التعديل ✅");}
-    else{const{data}=await supabase.from("employees").insert(emp).select().single();showToast("تمت الإضافة ✅");}
-    setSaving(false);setModal(null);onRefresh();
+    try{
+      let res;
+      if(emp.id){
+        res=await supabase.from("employees").update(emp).eq("id",emp.id);
+      } else {
+        // remove id if it's a new record
+        const{id:_,...empData}=emp;
+        res=await supabase.from("employees").insert(empData).select().single();
+      }
+      if(res.error) throw res.error;
+      showToast(emp.id?"تم التعديل ✅":"تمت الإضافة ✅");
+      setSaving(false);setModal(null);onRefresh();
+    }catch(e){
+      showToast("خطأ في الحفظ: "+e.message,"error");
+      setSaving(false);
+    }
   };
-  const delEmp=async(id)=>{await supabase.from("employees").delete().eq("id",id);setDelConfirm(null);showToast("تم الحذف","error");onRefresh();};
+  const delEmp=async(id)=>{
+    const res=await supabase.from("employees").delete().eq("id",id);
+    if(res.error){showToast("خطأ في الحذف: "+res.error.message,"error");return;}
+    setDelConfirm(null);showToast("تم الحذف","error");onRefresh();
+  };
   return <div>
     <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
       <input style={{...S.input,maxWidth:230}} placeholder="🔍 اسم / هاتف..." value={search} onChange={e=>setSearch(e.target.value)}/>
@@ -2203,17 +2298,25 @@ export default function App(){
 
   const loadData=useCallback(async()=>{
     if(!user) return;setDataLoading(true);
-    const[{data:e},{data:p},{data:a},{data:v},{data:c},{data:l}]=await Promise.all([
-      supabase.from("employees").select("*").order("name"),
-      supabase.from("training_programs").select("*"),
-      supabase.from("attendance").select("*"),
-      supabase.from("evaluations").select("*"),
-      supabase.from("certificates").select("*"),
-      role==="admin"?supabase.from("audit_log").select("*").order("created_at",{ascending:false}).limit(300):{data:[]},
-    ]);
-    setEmployees(e||[]);
-    const pm={};(p||[]).forEach(x=>pm[x.domain]=x);setPrograms(pm);
-    setAttendance(a||[]);setEvaluations(v||[]);setCerts(c||[]);setAuditLogs(l||[]);
+    try{
+      const[{data:e,error:eErr},{data:p,error:pErr},{data:a,error:aErr},{data:v,error:vErr},{data:c,error:cErr},{data:l}]=await Promise.all([
+        supabase.from("employees").select("*").order("name"),
+        supabase.from("training_programs").select("*"),
+        supabase.from("attendance").select("*"),
+        supabase.from("evaluations").select("*"),
+        supabase.from("certificates").select("*"),
+        role==="admin"?supabase.from("audit_log").select("*").order("created_at",{ascending:false}).limit(300):{data:[]},
+      ]);
+      // FIX #3: Log any RLS errors so we can see them
+      [eErr,pErr,aErr,vErr,cErr].forEach((err,i)=>{
+        if(err) console.error("loadData error table "+i+":",err.message,err.hint||"");
+      });
+      setEmployees(e||[]);
+      const pm={};(p||[]).forEach(x=>pm[x.domain]=x);setPrograms(pm);
+      setAttendance(a||[]);setEvaluations(v||[]);setCerts(c||[]);setAuditLogs(l||[]);
+    }catch(err){
+      console.error("loadData fatal:",err);
+    }
     setDataLoading(false);
   },[user,role]);
 
@@ -2262,7 +2365,8 @@ export default function App(){
         </div>
       </div>
       <div style={{display:"flex",gap:8,alignItems:"center"}}>
-        {dataLoading&&<span style={{fontSize:10,color:"#f59e0b",animation:"spin 1s linear infinite"}}>⟳</span>}
+        {dataLoading&&<span style={{fontSize:11,color:"#f59e0b"}}>⟳ تحميل...</span>}
+        <button style={S.btn(BG.elevated,"#64748b","5px 10px")} onClick={loadData} title="تحديث البيانات">🔄</button>
         <span style={{...S.badge(BG.elevated,ROLES[role]?.color||"#64748b"),fontSize:10}}>{ROLES[role]?.label||role}</span>
         <span style={{fontSize:10,color:"#334155",maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{user.email}</span>
         <button style={S.btn(BG.elevated,"#64748b","6px 12px")} onClick={handleLogout}>خروج</button>
