@@ -716,7 +716,7 @@ function AnnualPlanPage({employees}){
             <td style={{padding:"10px 14px",color:totCost>totRate?"#ef4444":"#22c55e",fontWeight:700}}>
               {totCost>totRate?"▲":"▼"}${Math.abs(totCost-totRate).toLocaleString()}</td>
             <td/>
-          </tfoot>
+          </tr></tfoot>
         </table>
       </div>
     </div>}
